@@ -1,0 +1,18 @@
+# secrets — never commit real env files (keep .env.example tracked)
+.env
+.env.local
+*.local
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# node / next
+node_modules/
+.next/
+
+# runtime artifacts
+screenshots/
+*.log
+.DS_Store

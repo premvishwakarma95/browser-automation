@@ -1,0 +1,6 @@
+browser-use
+cloakbrowser
+supabase
+python-dotenv
+fastapi
+uvicorn
