@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { composeTask, type PlaygroundStudent, type PlaygroundUniversity } from '@/lib/composeTask';
 
 const WORKER_API = process.env.NEXT_PUBLIC_WORKER_API_URL || 'http://localhost:8000';
 
@@ -19,14 +20,50 @@ type Message =
   | { kind: 'done'; result: string }
   | { kind: 'error'; message: string };
 
-export default function PlaygroundClient() {
-  const [task, setTask] = useState('Fill the form with name "Marco Rossi" and email "marco@example.com". Do not submit.');
-  const [url, setUrl] = useState('https://www.selenium.dev/selenium/web/web-form.html');
+type Mode = 'try' | 'custom';
+
+export default function PlaygroundClient({
+  students,
+  universities,
+}: {
+  students: PlaygroundStudent[];
+  universities: PlaygroundUniversity[];
+}) {
+  const [mode, setMode] = useState<Mode>('try');
+
+  // Try mode — pick real records + a short instruction.
+  const [studentId, setStudentId] = useState('');
+  const [universityId, setUniversityId] = useState('');
+  const [operatorPrompt, setOperatorPrompt] = useState('Log in and fill the admission form. Do not submit.');
+
+  // Custom mode — free-form, as before.
+  const [customTask, setCustomTask] = useState('Fill the form with name "Marco Rossi" and email "marco@example.com". Do not submit.');
+  const [customUrl, setCustomUrl] = useState('https://www.selenium.dev/selenium/web/web-form.html');
+
   const [running, setRunning] = useState(false);
   const [showBrowser, setShowBrowser] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const feedRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const selectedStudent = useMemo(() => students.find((s) => s.id === studentId), [students, studentId]);
+  const selectedUniversity = useMemo(() => universities.find((u) => u.id === universityId), [universities, universityId]);
+
+  const composedTask = useMemo(() => {
+    if (!selectedStudent || !selectedUniversity) return '';
+    return composeTask(selectedStudent, selectedUniversity, operatorPrompt);
+  }, [selectedStudent, selectedUniversity, operatorPrompt]);
+
+  const canRunTry = Boolean(selectedStudent && selectedUniversity);
+
+  // When a student has a selected_university_id, default the university dropdown to it.
+  function onStudentChange(id: string) {
+    setStudentId(id);
+    const s = students.find((x) => x.id === id);
+    if (s?.selected_university_id && !universityId) {
+      setUniversityId(s.selected_university_id);
+    }
+  }
 
   const push = (m: Message) => {
     setMessages((prev) => [...prev, m]);
@@ -39,6 +76,18 @@ export default function PlaygroundClient() {
 
   async function run() {
     if (running) return;
+
+    let task: string;
+    let url: string | null;
+    if (mode === 'try') {
+      if (!canRunTry) return;
+      task = composedTask;
+      url = selectedUniversity?.portal_url ?? null;
+    } else {
+      task = customTask;
+      url = customUrl || null;
+    }
+
     setMessages([]);
     setRunning(true);
     const controller = new AbortController();
@@ -47,7 +96,7 @@ export default function PlaygroundClient() {
       const res = await fetch(`${WORKER_API}/playground/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task, url: url || null, headless: !showBrowser, max_steps: 15 }),
+        body: JSON.stringify({ task, url, headless: !showBrowser, max_steps: 15 }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`Worker responded ${res.status}`);
@@ -89,32 +138,118 @@ export default function PlaygroundClient() {
   }
 
   return (
-    <div className="grid grid-cols-[360px_1fr] gap-6">
+    <div className="grid grid-cols-[380px_1fr] gap-6">
       {/* Controls */}
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">Start URL</span>
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…"
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium text-slate-700">Task</span>
-          <textarea value={task} onChange={(e) => setTask(e.target.value)} rows={6}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        </label>
+        {/* Mode tabs */}
+        <div className="flex rounded-lg bg-slate-100 p-1">
+          <button
+            onClick={() => setMode('try')}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              mode === 'try' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Try
+          </button>
+          <button
+            onClick={() => setMode('custom')}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              mode === 'custom' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Custom
+          </button>
+        </div>
+
+        {mode === 'try' ? (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">Student</span>
+              <select
+                value={studentId}
+                onChange={(e) => onStudentChange(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">— select a student —</option>
+                {students.map((s) => (
+                  <option key={s.id} value={s.id}>{s.full_name}</option>
+                ))}
+              </select>
+              {students.length === 0 && (
+                <span className="mt-1 block text-xs text-amber-600">No students yet — add one first.</span>
+              )}
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">University</span>
+              <select
+                value={universityId}
+                onChange={(e) => setUniversityId(e.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">— select a university —</option>
+                {universities.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+              {universities.length === 0 && (
+                <span className="mt-1 block text-xs text-amber-600">No universities yet — add one first.</span>
+              )}
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">Prompt</span>
+              <textarea
+                value={operatorPrompt}
+                onChange={(e) => setOperatorPrompt(e.target.value)}
+                rows={3}
+                placeholder='e.g. "Log in and fill the admission form, do not submit"'
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </label>
+
+            {selectedStudent && selectedUniversity && (
+              <details className="rounded-md bg-slate-50 p-2 text-xs text-slate-500">
+                <summary className="cursor-pointer select-none font-medium text-slate-600">Preview composed task</summary>
+                <pre className="mt-2 whitespace-pre-wrap font-mono">{composedTask}</pre>
+              </details>
+            )}
+            {selectedUniversity && !selectedUniversity.portal_url && (
+              <p className="text-xs text-amber-600">This university has no portal URL set — the agent won&apos;t know where to start.</p>
+            )}
+          </>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">Start URL</span>
+              <input value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} placeholder="https://…"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-slate-700">Task</span>
+              <textarea value={customTask} onChange={(e) => setCustomTask(e.target.value)} rows={6}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+            </label>
+          </>
+        )}
+
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={showBrowser} disabled={running}
             onChange={(e) => setShowBrowser(e.target.checked)} />
           Show browser window (watch cloakbrowser live)
         </label>
+
         {running ? (
           <button onClick={stop}
             className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700">
             ■ Stop
           </button>
         ) : (
-          <button onClick={run}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+          <button
+            onClick={run}
+            disabled={mode === 'try' && !canRunTry}
+            className="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
             ▶ Run agent
           </button>
         )}
@@ -127,7 +262,9 @@ export default function PlaygroundClient() {
       <div ref={feedRef} className="h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         {messages.length === 0 && (
           <div className="flex h-full items-center justify-center text-sm text-slate-400">
-            Enter a task and hit Run — the agent&apos;s steps stream here live.
+            {mode === 'try'
+              ? 'Select a student + university, add a prompt, and hit Run.'
+              : 'Enter a task and hit Run — the agent’s steps stream here live.'}
           </div>
         )}
         <div className="space-y-3">
