@@ -12,6 +12,7 @@ Integration approach (verified against browser-use 0.13.x + cloakbrowser 0.4.x):
 
 from .config import config
 from .instruction import build_instruction
+from .browser_lifecycle import make_user_data_dir, teardown_browser
 
 # Defaults tuned for Italian university portals.
 LOCALE = "it-IT"
@@ -22,6 +23,9 @@ async def run_agent(student: dict, university: dict) -> dict:
     """Launch the stealth browser, let MiniMax fill the form, pause before submit."""
     from cloakbrowser import ensure_binary, build_args
     from browser_use import Agent, ChatOpenAI, Browser
+
+    from .llm_output_fix import patch_agent_output_json_parsing
+    patch_agent_output_json_parsing()
 
     # 1) MiniMax as the driving LLM (OpenAI-compatible endpoint)
     #
@@ -40,11 +44,14 @@ async def run_agent(student: dict, university: dict) -> dict:
         add_schema_to_system_prompt=True,
     )
 
-    # 2) cloakbrowser stealth Chromium binary + stealth launch args
+    # 2) cloakbrowser stealth Chromium binary + stealth launch args.
+    # user_data_dir is unique per run — it doubles as a marker so we can
+    # guarantee this exact process is killed afterward (see teardown_browser).
     binary_path = ensure_binary(license_key=config.cloak_license_key or None)
+    user_data_dir = make_user_data_dir()
     args = build_args(
         stealth_args=True,
-        extra_args=None,
+        extra_args=[f"--user-data-dir={user_data_dir}"],
         headless=config.headless,
         locale=LOCALE,
         timezone=TIMEZONE,
@@ -64,5 +71,14 @@ async def run_agent(student: dict, university: dict) -> dict:
         browser=browser,
         use_vision=True,
     )
-    result = await agent.run()
-    return {"status": "READY_FOR_REVIEW", "result": str(result)}
+    try:
+        result = await agent.run()
+        return {"status": "READY_FOR_REVIEW", "result": str(result)}
+    finally:
+        # We constructed this browser ourselves, so browser-use won't close it for
+        # us. Empirically, even `.kill()` only resets browser-use's own session
+        # state — it does NOT terminate the OS Chromium process, which then lives
+        # for the rest of the (long-running, poll-forever) worker's lifetime.
+        # teardown_browser() adds a guaranteed hard-kill on top, scoped to only
+        # this run via its unique user_data_dir marker.
+        await teardown_browser(browser, user_data_dir)
