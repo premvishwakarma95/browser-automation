@@ -32,3 +32,9 @@ Endpoints: `GET /health`, `POST /playground/run` (streams agent steps as SSE).
 The admin Playground page (`/playground`) calls this at `NEXT_PUBLIC_WORKER_API_URL`.
 
 > The Supabase project here must be a NEW/SEPARATE project — not alzato, not enquiry-app.
+
+
+## Command to start worker
+```bash
+.venv/bin/python -m uvicorn src.api:app --port 8000
+```
