@@ -3,27 +3,85 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabaseServer';
+import { DOCUMENT_TYPES } from '@/lib/documentTypes';
 
 const str = (fd: FormData, k: string) => {
   const v = (fd.get(k) as string | null)?.trim();
   return v ? v : null;
 };
 
+// Uploads any files present in formData under `doc_<key>` (see DOCUMENT_TYPES)
+// to Storage and records each as a `documents` row. Shared by create + update
+// so a student can pick up new/replacement documents either way.
+async function uploadStudentDocuments(sb: ReturnType<typeof supabaseAdmin>, studentId: string, formData: FormData) {
+  for (const { key, label } of DOCUMENT_TYPES) {
+    const file = formData.get(`doc_${key}`);
+    if (!(file instanceof File) || file.size === 0) continue;
+
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${studentId}/${key}-${Date.now()}-${safeName}`;
+    const { error: uploadErr } = await sb.storage
+      .from('documents')
+      .upload(path, file, { contentType: file.type || 'application/octet-stream' });
+    if (uploadErr) throw new Error(`Failed to upload ${label}: ${uploadErr.message}`);
+
+    const { error: docErr } = await sb.from('documents').insert({
+      student_id: studentId,
+      doc_type: key,
+      storage_path: path,
+      file_name: file.name,
+    });
+    if (docErr) throw new Error(docErr.message);
+  }
+}
+
 // --- Students ---------------------------------------------------------------
 export async function createStudent(formData: FormData) {
   const sb = supabaseAdmin();
-  const { error } = await sb.from('students').insert({
-    full_name: str(formData, 'full_name'),
-    email: str(formData, 'email'),
-    phone: str(formData, 'phone'),
-    date_of_birth: str(formData, 'date_of_birth'),
-    nationality: str(formData, 'nationality'),
-    passport_number: str(formData, 'passport_number'),
-    program: str(formData, 'program'),
-    intake_year: str(formData, 'intake_year'),
-    selected_university_id: str(formData, 'selected_university_id'),
-  });
+  const { data: student, error } = await sb
+    .from('students')
+    .insert({
+      full_name: str(formData, 'full_name'),
+      email: str(formData, 'email'),
+      phone: str(formData, 'phone'),
+      date_of_birth: str(formData, 'date_of_birth'),
+      nationality: str(formData, 'nationality'),
+      passport_number: str(formData, 'passport_number'),
+      program: str(formData, 'program'),
+      intake_year: str(formData, 'intake_year'),
+    })
+    .select('id')
+    .single();
   if (error) throw new Error(error.message);
+
+  await uploadStudentDocuments(sb, student.id, formData);
+
+  revalidatePath('/students');
+  redirect('/students');
+}
+
+export async function updateStudent(formData: FormData) {
+  const sb = supabaseAdmin();
+  const studentId = str(formData, 'student_id');
+  if (!studentId) throw new Error('student_id required');
+
+  const { error } = await sb
+    .from('students')
+    .update({
+      full_name: str(formData, 'full_name'),
+      email: str(formData, 'email'),
+      phone: str(formData, 'phone'),
+      date_of_birth: str(formData, 'date_of_birth'),
+      nationality: str(formData, 'nationality'),
+      passport_number: str(formData, 'passport_number'),
+      program: str(formData, 'program'),
+      intake_year: str(formData, 'intake_year'),
+    })
+    .eq('id', studentId);
+  if (error) throw new Error(error.message);
+
+  await uploadStudentDocuments(sb, studentId, formData);
+
   revalidatePath('/students');
   redirect('/students');
 }
@@ -74,26 +132,19 @@ export async function createUniversity(input: UniversityInput) {
 export async function createApplication(formData: FormData) {
   const sb = supabaseAdmin();
   const studentId = str(formData, 'student_id');
+  const universityId = str(formData, 'university_id');
   if (!studentId) throw new Error('student_id required');
-
-  const { data: student, error: sErr } = await sb
-    .from('students')
-    .select('selected_university_id')
-    .eq('id', studentId)
-    .single();
-  if (sErr) throw new Error(sErr.message);
-  if (!student?.selected_university_id) {
-    throw new Error('Student has no selected university — set one first.');
-  }
+  if (!universityId) throw new Error('university_id required');
 
   const { error } = await sb.from('applications').insert({
     student_id: studentId,
-    university_id: student.selected_university_id,
+    university_id: universityId,
     status: 'NOT_STARTED',
   });
   if (error) throw new Error(error.message);
   revalidatePath('/applications');
   revalidatePath('/');
+  redirect('/applications');
 }
 
 // --- Human review: approve a drafted application -> mark SUBMITTED -----------

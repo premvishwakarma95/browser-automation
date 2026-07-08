@@ -40,6 +40,10 @@ export default function PlaygroundClient({
   const [customTask, setCustomTask] = useState('Fill the form with name "Marco Rossi" and email "marco@example.com". Do not submit.');
   const [customUrl, setCustomUrl] = useState('https://www.selenium.dev/selenium/web/web-form.html');
 
+  // Not user-facing — the agent should self-stop via the STOPPING CRITERIA
+  // baked into the task text (see composeTask.ts / api.py). This is just a
+  // hard safety-net ceiling in case a run somehow never calls done.
+  const MAX_STEPS = 15;
   const [running, setRunning] = useState(false);
   const [showLiveView, setShowLiveView] = useState(true);
   const [screenshot, setScreenshot] = useState<string | null>(null);
@@ -98,7 +102,7 @@ export default function PlaygroundClient({
       const res = await fetch(`${WORKER_API}/playground/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task, url, max_steps: 15 }),
+        body: JSON.stringify({ task, url, max_steps: MAX_STEPS }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`Worker responded ${res.status}`);

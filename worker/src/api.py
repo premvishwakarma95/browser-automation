@@ -97,6 +97,17 @@ async def playground_run(req: RunRequest):
         patch_agent_output_json_parsing()
 
         task = req.task if not req.url else f"{req.task}\n\nStart at this URL: {req.url}"
+        task += """
+
+STOPPING CRITERIA (read carefully — this is what "done" means for this task):
+- The moment the objective above is achieved, call the `done` action immediately.
+  One check is enough to confirm success (e.g. a success message, a URL change,
+  an expected element appearing) — do not re-verify repeatedly or keep exploring.
+- Do not take any action that wasn't asked for (e.g. logging out after logging
+  in, navigating to unrelated pages, clicking things "just to check").
+- If you determine the objective can't be completed, call `done` with
+  success=false and explain why — don't keep retrying indefinitely.
+- Never submit, never pay, never solve a CAPTCHA/OTP yourself."""
 
         llm = ChatOpenAI(
             model=config.minimax_model,

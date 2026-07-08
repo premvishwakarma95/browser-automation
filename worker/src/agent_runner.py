@@ -19,7 +19,7 @@ LOCALE = "it-IT"
 TIMEZONE = "Europe/Rome"
 
 
-async def run_agent(student: dict, university: dict) -> dict:
+async def run_agent(student: dict, university: dict, document_paths: dict[str, str] | None = None) -> dict:
     """Launch the stealth browser, let MiniMax fill the form, pause before submit."""
     from cloakbrowser import ensure_binary, build_args
     from browser_use import Agent, ChatOpenAI, Browser
@@ -66,7 +66,7 @@ async def run_agent(student: dict, university: dict) -> dict:
 
     # 4) run the agent toward the "fill, don't submit" task
     agent = Agent(
-        task=build_instruction(student, university),
+        task=build_instruction(student, university, document_paths),
         llm=llm,
         browser=browser,
         use_vision=True,

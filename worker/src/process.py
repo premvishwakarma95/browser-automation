@@ -12,6 +12,7 @@ from .config import config
 from .models import Status
 from .validation import find_missing_fields
 from .instruction import build_instruction
+from .documents import download_required_documents, cleanup as cleanup_documents
 from . import db
 
 
@@ -31,7 +32,7 @@ def student_values(student: dict) -> dict:
 
 def _required_as_pairs(university: dict) -> list[dict]:
     """Adapt university_fields → the shape find_missing_fields expects."""
-    return [{"name": f["field_name"], "required": f.get("required", True)}
+    return [{"name": f["field_name"], "required": f.get("required", True), "type": f.get("field_type", "text")}
             for f in university.get("fields", [])]
 
 
@@ -46,43 +47,52 @@ async def process_job(job: dict) -> str:
         return Status.FAILED.value
 
     values = student_values(student)
+    documents = db.get_documents(job["student_id"])
 
-    # 1) Validate BEFORE automating.
-    missing = find_missing_fields(values, _required_as_pairs(university))
+    # 1) Validate BEFORE automating — file-type fields are checked against
+    # `documents`, everything else against the student data bag.
+    missing = find_missing_fields(values, _required_as_pairs(university), documents)
     if missing:
         db.update_application(job["id"], status=Status.MISSING_DATA.value,
                               missing_fields=missing, completed_at=db.now_iso())
         return Status.MISSING_DATA.value
 
-    # 2) Fill the form (real agent, or a canned draft in MOCK mode).
+    # 2) Pull this student's matched documents down to local paths the agent
+    # can actually hand to a file-upload input (it needs a real path, not a
+    # Storage URL). Guaranteed cleanup below regardless of outcome.
+    document_paths, temp_dir = download_required_documents(university.get("fields", []), documents)
     try:
-        if config.mock_agent:
-            result = _mock_fill(values, university)
-        else:
-            from .agent_runner import run_agent
-            result = await run_agent(values, university)
+        # 3) Fill the form (real agent, or a canned draft in MOCK mode).
+        try:
+            if config.mock_agent:
+                result = _mock_fill(values, university)
+            else:
+                from .agent_runner import run_agent
+                result = await run_agent(values, university, document_paths)
 
-        filled = result.get("filled_fields") or [
-            {"label": k, "value": v} for k, v in values.items()
-        ]
-        db.update_application(
-            job["id"],
-            status=Status.READY_FOR_REVIEW.value,
-            filled_fields=filled,
-            screenshot_path=result.get("screenshot_path"),
-            agent_log=result.get("log", []),
-            draft_saved=True,
-            completed_at=db.now_iso(),
-        )
-        # 3) Queue the human review (approve → pay & submit).
-        db.create_pending_action(job["id"], "REVIEW_DRAFT",
-                                 {"filled_fields": filled})
-        return Status.READY_FOR_REVIEW.value
+            filled = result.get("filled_fields") or [
+                {"label": k, "value": v} for k, v in values.items()
+            ]
+            db.update_application(
+                job["id"],
+                status=Status.READY_FOR_REVIEW.value,
+                filled_fields=filled,
+                screenshot_path=result.get("screenshot_path"),
+                agent_log=result.get("log", []),
+                draft_saved=True,
+                completed_at=db.now_iso(),
+            )
+            # 4) Queue the human review (approve → pay & submit).
+            db.create_pending_action(job["id"], "REVIEW_DRAFT",
+                                     {"filled_fields": filled})
+            return Status.READY_FOR_REVIEW.value
 
-    except Exception as e:  # noqa: BLE001
-        db.update_application(job["id"], status=Status.FAILED.value,
-                              error=str(e), completed_at=db.now_iso())
-        return Status.FAILED.value
+        except Exception as e:  # noqa: BLE001
+            db.update_application(job["id"], status=Status.FAILED.value,
+                                  error=str(e), completed_at=db.now_iso())
+            return Status.FAILED.value
+    finally:
+        cleanup_documents(temp_dir)
 
 
 def _mock_fill(values: dict, university: dict) -> dict:

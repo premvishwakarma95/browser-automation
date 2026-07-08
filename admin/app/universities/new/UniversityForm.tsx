@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createUniversity, type UniversityInput } from '@/app/actions';
+import { DOCUMENT_TYPES } from '@/lib/documentTypes';
 
 type FieldRow = { field_name: string; label: string; field_type: string; required: boolean };
 
@@ -91,12 +92,35 @@ export default function UniversityForm() {
         <div className="space-y-2">
           {fields.map((f, i) => (
             <div key={i} className="flex items-center gap-2">
-              <input placeholder="field_name (key)" value={f.field_name} onChange={(e) => updateField(i, { field_name: e.target.value })}
-                className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+              {f.field_type === 'file' ? (
+                <select
+                  value={f.field_name}
+                  onChange={(e) => {
+                    const doc = DOCUMENT_TYPES.find((d) => d.key === e.target.value);
+                    updateField(i, { field_name: e.target.value, label: doc?.label ?? '' });
+                  }}
+                  className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+                >
+                  <option value="">— choose document —</option>
+                  {DOCUMENT_TYPES.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                </select>
+              ) : (
+                <input placeholder="field_name (key)" value={f.field_name} onChange={(e) => updateField(i, { field_name: e.target.value })}
+                  className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
+              )}
               <input placeholder="Label" value={f.label} onChange={(e) => updateField(i, { label: e.target.value })}
                 className="flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm" />
-              <select value={f.field_type} onChange={(e) => updateField(i, { field_type: e.target.value })}
-                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm">
+              <select
+                value={f.field_type}
+                onChange={(e) => {
+                  const field_type = e.target.value;
+                  // Switching to "file" resets field_name so it always comes from the
+                  // fixed document-type list below — that's what lets the worker match
+                  // this field to a specific uploaded document by key, no fuzzy matching.
+                  updateField(i, { field_type, field_name: field_type === 'file' ? '' : f.field_name });
+                }}
+                className="rounded-md border border-gray-300 px-2 py-1.5 text-sm"
+              >
                 {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
               <label className="flex items-center gap-1 text-xs text-gray-600">

@@ -78,6 +78,22 @@ def get_university(university_id: str) -> dict | None:
     return university
 
 
+def get_documents(student_id: str) -> dict[str, dict]:
+    """doc_type -> latest {storage_path, file_name} uploaded for this student."""
+    sb = get_client()
+    res = (
+        sb.table("documents")
+        .select("doc_type,storage_path,file_name,uploaded_at")
+        .eq("student_id", student_id)
+        .order("uploaded_at")
+        .execute()
+    )
+    out: dict[str, dict] = {}
+    for row in res.data or []:
+        out[row["doc_type"]] = row  # later (more recent) rows overwrite earlier ones
+    return out
+
+
 def update_application(application_id: str, **patch):
     sb = get_client()
     return sb.table("applications").update(patch).eq("id", application_id).execute()

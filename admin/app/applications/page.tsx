@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabaseServer';
 import { StatusBadge } from '@/lib/ui';
 import { approveApplication } from '@/app/actions';
@@ -17,17 +18,22 @@ export default async function ApplicationsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Applications</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          The worker fills each form and saves a draft. Review the filled data, then approve to mark it submitted.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Applications</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            The worker fills each form and saves a draft. Review the filled data, then approve to mark it submitted.
+          </p>
+        </div>
+        <Link href="/applications/new" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+          + Queue application
+        </Link>
       </div>
 
       <div className="space-y-4">
         {apps.length === 0 && (
           <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-400 shadow-sm">
-            No applications yet. Queue one from the Students page.
+            No applications yet. Click &ldquo;Queue application&rdquo; above to start one.
           </div>
         )}
 
