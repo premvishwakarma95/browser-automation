@@ -11,7 +11,6 @@ type StepEvent = {
   evaluation?: string;
   next_goal?: string;
   actions?: Record<string, unknown>[];
-  screenshot?: string;
   error?: string;
 };
 
@@ -123,8 +122,8 @@ export default function PlaygroundClient({
           if (!data) continue;
           const payload = JSON.parse(data);
           if (event === 'start') push({ kind: 'start', task: payload.task, model: payload.model });
-          else if (event === 'step') {
-            push({ kind: 'step', step: payload });
+          else if (event === 'step') push({ kind: 'step', step: payload });
+          else if (event === 'frame') {
             if (payload.screenshot) setScreenshot(payload.screenshot);
           }
           else if (event === 'done') push({ kind: 'done', result: payload.result });
@@ -282,7 +281,7 @@ export default function PlaygroundClient({
         </div>
       </div>
 
-      {/* Live browser view — latest screenshot, refreshed on every agent step */}
+      {/* Live browser view — screenshot polled ~every 0.7s, independent of agent steps */}
       {showLiveView && (
         <div className="flex h-[70vh] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
@@ -293,7 +292,7 @@ export default function PlaygroundClient({
             {screenshot ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`data:image/png;base64,${screenshot}`}
+                src={`data:image/jpeg;base64,${screenshot}`}
                 alt="Latest browser screenshot"
                 className="h-full w-full object-contain object-top"
               />

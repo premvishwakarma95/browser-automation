@@ -1,12 +1,19 @@
 """HTTP API for the admin Playground — runs the browser agent live and streams
-each step (plus a screenshot) back as Server-Sent Events (SSE), so the admin
-can watch it work. Everything here is self-hosted — cloakbrowser's stealth
-Chromium, same as the production worker, no external browser service.
+its steps AND a near-real-time screenshot feed back as Server-Sent Events
+(SSE), so the admin can watch it work. Everything here is self-hosted —
+cloakbrowser's stealth Chromium, same as the production worker, no external
+browser service.
+
+The screenshot feed is polled on its own clock (FRAME_INTERVAL_SECONDS),
+independent of the agent's step cadence — a single MiniMax step can take many
+seconds to reason through, so waiting for step boundaries alone made the live
+view feel laggy.
 
 Run:  uvicorn src.api:app --port 8000   (from the worker/ dir, venv active)
 """
 
 import asyncio
+import base64
 import json
 
 from fastapi import FastAPI
@@ -38,6 +45,9 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+FRAME_INTERVAL_SECONDS = 0.7
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "model": config.minimax_model}
@@ -51,26 +61,33 @@ async def playground_run(req: RunRequest):
         queue: asyncio.Queue = asyncio.Queue()
 
         # Called by browser-use after each model step: (browser_state, model_output, n).
-        # browser_state.screenshot is already a base64 PNG — browser-use captures it
-        # for its own vision calls (use_vision=True below), so this is free: no extra
-        # CDP round-trip, no separate live-view infra.
         async def on_step(browser_state, model_output, n_steps):
             try:
                 actions = []
                 for a in getattr(model_output, "action", None) or []:
                     dumped = a.model_dump(exclude_none=True) if hasattr(a, "model_dump") else {}
                     actions.append(dumped)
-                screenshot = getattr(browser_state, "screenshot", None)
                 await queue.put(("step", {
                     "n": n_steps,
                     "url": getattr(browser_state, "url", "") or "",
                     "evaluation": getattr(model_output, "evaluation_previous_goal", "") or "",
                     "next_goal": getattr(model_output, "next_goal", "") or "",
                     "actions": actions,
-                    "screenshot": screenshot,
                 }))
             except Exception as e:  # noqa: BLE001
                 await queue.put(("step", {"n": n_steps, "error": str(e)}))
+
+        # Polls a fresh screenshot on its own clock, independent of agent steps —
+        # a single step can take many seconds, so this is what makes the live
+        # view feel close to real-time instead of jumping only at step boundaries.
+        async def stream_frames():
+            while True:
+                try:
+                    data = await browser.take_screenshot(format="jpeg", quality=55)
+                    await queue.put(("frame", {"screenshot": base64.b64encode(data).decode()}))
+                except Exception:  # noqa: BLE001 — e.g. mid-navigation; just skip this frame
+                    pass
+                await asyncio.sleep(FRAME_INTERVAL_SECONDS)
 
         # Lazy imports so the module loads even before the browser stack is ready.
         from cloakbrowser import ensure_binary, build_args
@@ -100,13 +117,26 @@ async def playground_run(req: RunRequest):
         )
 
         async def run_agent():
+            frame_task = None
             try:
+                # Start explicitly (rather than letting agent.run() lazily start it)
+                # so the frame poller has a live CDP session to shoot against from
+                # the first tick, not just from whenever the agent's first step lands.
+                await browser.start()
+                frame_task = asyncio.create_task(stream_frames())
+
                 history = await agent.run(max_steps=req.max_steps)
                 final = history.final_result() if hasattr(history, "final_result") else str(history)
                 await queue.put(("done", {"result": str(final)}))
             except Exception as e:  # noqa: BLE001
                 await queue.put(("error", {"message": str(e)}))
             finally:
+                if frame_task:
+                    frame_task.cancel()
+                    try:
+                        await frame_task
+                    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                        pass
                 # browser.kill()/.stop()/.close() only reset browser-use's own
                 # session state — none of them terminate the OS Chromium process
                 # (verified empirically). teardown_browser() force-kills it via
