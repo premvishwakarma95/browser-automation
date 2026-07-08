@@ -1,5 +1,7 @@
 """HTTP API for the admin Playground — runs the browser agent live and streams
-each step back as Server-Sent Events (SSE), so the admin can watch it work.
+each step (plus a screenshot) back as Server-Sent Events (SSE), so the admin
+can watch it work. Everything here is self-hosted — cloakbrowser's stealth
+Chromium, same as the production worker, no external browser service.
 
 Run:  uvicorn src.api:app --port 8000   (from the worker/ dir, venv active)
 """
@@ -29,7 +31,6 @@ app.add_middleware(
 class RunRequest(BaseModel):
     task: str
     url: str | None = None
-    headless: bool = True
     max_steps: int = 15
 
 
@@ -44,24 +45,29 @@ def health():
 
 @app.post("/playground/run")
 async def playground_run(req: RunRequest):
-    """Run the agent on a free-form task and stream steps as they happen."""
+    """Run the agent on a free-form task and stream steps (with a screenshot each) as they happen."""
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
 
         # Called by browser-use after each model step: (browser_state, model_output, n).
+        # browser_state.screenshot is already a base64 PNG — browser-use captures it
+        # for its own vision calls (use_vision=True below), so this is free: no extra
+        # CDP round-trip, no separate live-view infra.
         async def on_step(browser_state, model_output, n_steps):
             try:
                 actions = []
                 for a in getattr(model_output, "action", None) or []:
                     dumped = a.model_dump(exclude_none=True) if hasattr(a, "model_dump") else {}
                     actions.append(dumped)
+                screenshot = getattr(browser_state, "screenshot", None)
                 await queue.put(("step", {
                     "n": n_steps,
                     "url": getattr(browser_state, "url", "") or "",
                     "evaluation": getattr(model_output, "evaluation_previous_goal", "") or "",
                     "next_goal": getattr(model_output, "next_goal", "") or "",
                     "actions": actions,
+                    "screenshot": screenshot,
                 }))
             except Exception as e:  # noqa: BLE001
                 await queue.put(("step", {"n": n_steps, "error": str(e)}))
@@ -85,8 +91,8 @@ async def playground_run(req: RunRequest):
         binary = ensure_binary(license_key=config.cloak_license_key or None)
         user_data_dir = make_user_data_dir()
         args = build_args(stealth_args=True, extra_args=[f"--user-data-dir={user_data_dir}"],
-                          headless=req.headless, locale="it-IT", timezone="Europe/Rome")
-        browser = Browser(executable_path=binary, args=args, headless=req.headless)
+                          headless=config.headless, locale="it-IT", timezone="Europe/Rome")
+        browser = Browser(executable_path=binary, args=args, headless=config.headless)
 
         agent = Agent(
             task=task, llm=llm, browser=browser, use_vision=True,

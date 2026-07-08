@@ -11,6 +11,7 @@ type StepEvent = {
   evaluation?: string;
   next_goal?: string;
   actions?: Record<string, unknown>[];
+  screenshot?: string;
   error?: string;
 };
 
@@ -41,7 +42,8 @@ export default function PlaygroundClient({
   const [customUrl, setCustomUrl] = useState('https://www.selenium.dev/selenium/web/web-form.html');
 
   const [running, setRunning] = useState(false);
-  const [showBrowser, setShowBrowser] = useState(true);
+  const [showLiveView, setShowLiveView] = useState(true);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const feedRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -89,6 +91,7 @@ export default function PlaygroundClient({
     }
 
     setMessages([]);
+    setScreenshot(null);
     setRunning(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -96,7 +99,7 @@ export default function PlaygroundClient({
       const res = await fetch(`${WORKER_API}/playground/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task, url, headless: !showBrowser, max_steps: 15 }),
+        body: JSON.stringify({ task, url, max_steps: 15 }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error(`Worker responded ${res.status}`);
@@ -120,7 +123,10 @@ export default function PlaygroundClient({
           if (!data) continue;
           const payload = JSON.parse(data);
           if (event === 'start') push({ kind: 'start', task: payload.task, model: payload.model });
-          else if (event === 'step') push({ kind: 'step', step: payload });
+          else if (event === 'step') {
+            push({ kind: 'step', step: payload });
+            if (payload.screenshot) setScreenshot(payload.screenshot);
+          }
           else if (event === 'done') push({ kind: 'done', result: payload.result });
           else if (event === 'error') push({ kind: 'error', message: payload.message });
         }
@@ -138,7 +144,16 @@ export default function PlaygroundClient({
   }
 
   return (
-    <div className="grid grid-cols-[380px_1fr] gap-6">
+    <div>
+      <div className="mb-3 flex justify-end">
+        <button
+          onClick={() => setShowLiveView((v) => !v)}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50"
+        >
+          {showLiveView ? 'Hide Browser' : 'Show Browser'}
+        </button>
+      </div>
+      <div className={`grid gap-6 ${showLiveView ? 'grid-cols-[380px_1fr_420px]' : 'grid-cols-[380px_1fr]'}`}>
       {/* Controls */}
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         {/* Mode tabs */}
@@ -233,12 +248,6 @@ export default function PlaygroundClient({
           </>
         )}
 
-        <label className="flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" checked={showBrowser} disabled={running}
-            onChange={(e) => setShowBrowser(e.target.checked)} />
-          Show browser window (watch cloakbrowser live)
-        </label>
-
         {running ? (
           <button onClick={stop}
             className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700">
@@ -271,6 +280,31 @@ export default function PlaygroundClient({
           {messages.map((m, i) => <Bubble key={i} m={m} />)}
           {running && <div className="text-xs text-slate-400">● agent working…</div>}
         </div>
+      </div>
+
+      {/* Live browser view — latest screenshot, refreshed on every agent step */}
+      {showLiveView && (
+        <div className="flex h-[70vh] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
+            <span className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-red-500' : 'bg-slate-300'}`} />
+            Live browser
+          </div>
+          <div className="flex flex-1 items-center justify-center overflow-hidden bg-slate-50">
+            {screenshot ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`data:image/png;base64,${screenshot}`}
+                alt="Latest browser screenshot"
+                className="h-full w-full object-contain object-top"
+              />
+            ) : (
+              <p className="px-4 text-center text-sm text-slate-400">
+                {running ? 'Waiting for the first screenshot…' : 'Click Run agent to start — the browser will appear here.'}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );
