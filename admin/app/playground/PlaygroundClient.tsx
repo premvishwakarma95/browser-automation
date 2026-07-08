@@ -156,7 +156,12 @@ export default function PlaygroundClient({
           {showLiveView ? 'Hide Browser' : 'Show Browser'}
         </button>
       </div>
-      <div className={`grid gap-6 ${showLiveView ? 'grid-cols-[380px_1fr_420px]' : 'grid-cols-[380px_1fr]'}`}>
+      {/*
+        Always 2 columns: controls + one right-hand panel. The right panel
+        shows EITHER the step feed OR the live browser, never both — toggling
+        swaps which one occupies that same space, it doesn't add a column.
+      */}
+      <div className="grid grid-cols-[380px_1fr] gap-6">
       {/* Controls */}
       <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         {/* Mode tabs */}
@@ -270,23 +275,8 @@ export default function PlaygroundClient({
         </p>
       </div>
 
-      {/* Live feed */}
-      <div ref={feedRef} className="h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-        {messages.length === 0 && (
-          <div className="flex h-full items-center justify-center text-sm text-slate-400">
-            {mode === 'try'
-              ? 'Select a student + university, add a prompt, and hit Run.'
-              : 'Enter a task and hit Run — the agent’s steps stream here live.'}
-          </div>
-        )}
-        <div className="space-y-3">
-          {messages.map((m, i) => <Bubble key={i} m={m} />)}
-          {running && <div className="text-xs text-slate-400">● agent working…</div>}
-        </div>
-      </div>
-
-      {/* Live browser view — screenshot polled ~every 0.7s, independent of agent steps */}
-      {showLiveView && (
+      {showLiveView ? (
+        /* Live browser view — screenshot polled ~every 0.7s, independent of agent steps */
         <div className="flex h-[70vh] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-1.5 border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-500">
             <span className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-red-500' : 'bg-slate-300'}`} />
@@ -305,6 +295,21 @@ export default function PlaygroundClient({
                 {running ? 'Waiting for the first screenshot…' : 'Click Run agent to start — the browser will appear here.'}
               </p>
             )}
+          </div>
+        </div>
+      ) : (
+        /* Step feed */
+        <div ref={feedRef} className="h-[70vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          {messages.length === 0 && (
+            <div className="flex h-full items-center justify-center text-sm text-slate-400">
+              {mode === 'try'
+                ? 'Select a student + university, add a prompt, and hit Run.'
+                : 'Enter a task and hit Run — the agent’s steps stream here live.'}
+            </div>
+          )}
+          <div className="space-y-3">
+            {messages.map((m, i) => <Bubble key={i} m={m} />)}
+            {running && <div className="text-xs text-slate-400">● agent working…</div>}
           </div>
         </div>
       )}
